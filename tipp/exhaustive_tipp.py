@@ -23,7 +23,9 @@ from functools import reduce
 _LOG = get_logger(__name__)
 
 
-class TIPPJoinSearchJobs(Join):
+## Not copied in UPP, inherits from JoinAlignJobs.
+# comparison with exhaustive.py 
+class TIPPJoinSearchJobs(Join): ## DIFF, UPP inherits from JoinAlignJobs
     """
     After all search jobs have finished on tips, we need to figure out which
     fragment goes to which subset and start aligning fragments.
@@ -31,21 +33,23 @@ class TIPPJoinSearchJobs(Join):
     """
     def __init__(self, alignment_threshold):
         Join.__init__(self)
-        self.alignment_threshold = alignment_threshold
-        self.root_problem = None
+        self.alignment_threshold = alignment_threshold ## DIFF from uPP
+        self.root_problem = None 
 
-    def setup_with_root_problem(self, root_problem):
+    def setup_with_root_problem(self, root_problem): ## DIFF from uPP
         self.root_problem = root_problem
         for p in root_problem.iter_leaves():
             self.add_job(p.jobs["hmmsearch"])
 
-    def figureout_fragment_subset(self):
+    def figureout_fragment_subset(self): ## DIFF from uPP, but in exhaustive
         """ Figure out which fragment should go to which subproblem"""
         # We need to keep and check the following flag because of
         # checkpoining scenarios (join already done before!)
         if "fragments.distribution.done" in self.root_problem.annotations:
             return
-        bitscores = dict([(name, []) for name in list(
+        ## DIFF, keeping bitscore instead of e-val
+        # actually equiv to exhaustive because frag maps to [] but this is a tuple
+        bitscores = dict([(name, []) for name in list( 
             self.root_problem.fragments.keys())])
         for fragment_chunk_problem in self.root_problem.iter_leaves():
             align_problem = fragment_chunk_problem.get_parent()
@@ -54,14 +58,16 @@ class TIPPJoinSearchJobs(Join):
             and add to them as we encounter new best hits for that
             subproblem'''
             if align_problem.fragments is None:
-                align_problem.fragments = MutableAlignment()
+                ## DIFF, instead of self.root_problem.fragments.get_soft_sub_alignment([])
+                align_problem.fragments = MutableAlignment() 
             search_res = fragment_chunk_problem.get_job_result_by_name(
                 "hmmsearch")
             for key in list(search_res.keys()):
                 ''' keep a list of all hits, and their bit scores'''
-                bitscores[key].append((search_res[key][1], align_problem))
+                # Different because bitscores
+                bitscores[key].append((search_res[key][1], align_problem)) 
 
-        for frag, tuplelist in bitscores.items():
+        for frag, tuplelist in bitscores.items(): ## DIFF
             ''' TODO: what to do with those that are not? For now, only output
                 warning message'''
             # TODO:  Need to double check and fix the math
@@ -80,12 +86,13 @@ class TIPPJoinSearchJobs(Join):
             ''' Sort subsets by their probability'''
             tuplelist.sort(reverse=True, key=lambda x: x[0])
             ''' Find enough subsets to reach the threshold '''
+            # Check if the aln thresh is surpassed
             selected = tuplelist[
                 0: max(1, reduce(
                     lambda x, y: (x[0], None)
                     if x[1] is None else
                     (y[0], x[1] + y[1]) if x[1] < int(
-                        1000000 * self.alignment_threshold) else
+                        1000000 * self.alignment_threshold) else 
                     (y[0], None),
                     enumerate([x[0] for x in tuplelist]))[0])]
 
@@ -105,10 +112,12 @@ class TIPPJoinSearchJobs(Join):
                     else 1000000
                 frag_rename = "%s_%s_%d" % (frag, align_problem.label, postfix)
                 align_problem.fragments[frag_rename] = \
-                    self.root_problem.fragments[frag]
+                    self.root_problem.fragments[frag] 
+        ## END DIFF
 
         self.root_problem.annotations["fragments.distribution.done"] = 1
 
+    ### Explicitly copied from JoinSearchJobs, since inherits from Join too
     def perform(self):
         """
         Distributes fragments to alignments subsets with best score,
@@ -152,18 +161,20 @@ class TIPPJoinSearchJobs(Join):
     def __str__(self):
         return "join search jobs for all tips of ", self.root_problem
 
-
-class TIPPJoinAlignJobs(JoinAlignJobs):
+# differences from exhaustive.py are:
+#   init Join instead of JoinAlignJobs
+#   check placer method before enqueuing jobs
+class TIPPJoinAlignJobs(JoinAlignJobs): 
     """
     After all alignments jobs for a placement subset have finished,
     we need to build those extended alignments and start placing fragments.
     This join takes care of that step.
     """
     def __init__(self, placer):
-        Join.__init__(self)
+        Join.__init__(self) # createing a Join rather than JoinAlignJobs object?
         self.placer = placer
 
-    def perform(self):
+    def perform(self): ## copied from exhaustive.py 
         pp = self.placement_problem
         fullExtendedAlignments = self.merge_subalignments()
 
@@ -180,7 +191,7 @@ class TIPPJoinAlignJobs(JoinAlignJobs):
             if queryExtendedAlignment.is_empty():
                 pj.fake_run = True
 
-            if self.placer == "pplacer":
+            if self.placer == "pplacer": # this is purely here to check placer type
                 assert isinstance(pj, PplacerJob)
 
                 # Write out the extended alignments, split into query and
@@ -213,17 +224,23 @@ class TIPPJoinAlignJobs(JoinAlignJobs):
         return "join align jobs for tips of ", self.placement_problem
 
 
-class TIPPMergeJsonJob(ExternalSeppJob):
+# Not in UPP; exhuastive imports a MergeJsonJob from sepp.jobs
+# mimics the MergeJsonJob class
+class TIPPMergeJsonJob(ExternalSeppJob): 
     def __init__(self, **kwargs):
         self.job_type = 'jsonmerger'
         ExternalSeppJob.__init__(self, self.job_type, **kwargs)
         self.out_file = None
+        # no self.input_string
+
+        # these are all new
         self.distribution = False
         self.taxonomy = None
         self.mapping = None
         self.threshold = None
         self.classification_file = None
         self.elim = float(options().hmmsearch.elim)
+
         if options().hmmsearch.filters.upper() == "TRUE":
             self.filters = True
         else:
@@ -234,7 +251,7 @@ class TIPPMergeJsonJob(ExternalSeppJob):
         if self.filters is None:
             raise Exception(
                 "Expecting true/false for options().hmmsearch.filters")
-        self.strategy = options().exhaustive.strategy
+        self.strategy = options().exhaustive.strategy ## NEED TO CHANGE THIS PROBABLY
         self.minsubsetsize = int(options().exhaustive.minsubsetsize)
         self.alignment_threshold = float(options().alignment_threshold)
         self.molecule = options().molecule
@@ -242,16 +259,20 @@ class TIPPMergeJsonJob(ExternalSeppJob):
         self.cutoff = 0
         self.push_down = False
 
+    # same
     def setup(self, in_string, output_file, **kwargs):
         self.stdindata = in_string
         self.out_file = output_file
         self._kwargs = kwargs
 
+    # new function
     def setup_for_tipp(self, in_string, output_file, taxonomy, mapping,
                        threshold, classification_file, push_down,
                        distribution=False, cutoff=0, **kwargs):
         self.stdindata = in_string
         self.out_file = output_file
+
+        # all new stuff
         self.taxonomy = taxonomy.name
         self.mapping = mapping.name
         self.distribution = distribution
@@ -262,7 +283,10 @@ class TIPPMergeJsonJob(ExternalSeppJob):
         self.cutoff = cutoff
 
     def get_invocation(self):
+        # the -r 4 is new, not sure what that means yet
         invoc = ["java", "-jar", self.path, "-", "-", self.out_file, "-r", "4"]
+
+        # these are all new invocations
         if self.taxonomy is not None:
             invoc.extend(["-t", self.taxonomy])
         if self.mapping is not None:
@@ -283,7 +307,8 @@ class TIPPMergeJsonJob(ExternalSeppJob):
         return "input:pipe output:%s; Pipe:\n%s" % (
             self.out_file, self.stdindata)
 
-    def read_results(self):
+    # this is the same
+    def read_results(self): 
         """
         Since the output file can be huge, we don't want to read it here,
         because it will need to get pickled and unpickled. Instead, we just
@@ -295,21 +320,26 @@ class TIPPMergeJsonJob(ExternalSeppJob):
         return self.out_file, self.stdoutdata
 
 
-class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
+# This is the class of interest when run() is called, inherits from AbstractAlg
+# differences are to unpickle large input file, use our own get_merge_job,  add
+# the alignment_threshold, load reference and add threshold check before 
+# connect_jobs(). 
+class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm): 
     """
     This implements the exhaustive algorithm where all alignments subsets
     are searched for every fragment. This is for TIPP, meaning that we also
     perform classification based on a given taxonomy.
     """
-    def __init__(self):
+    def __init__(self): ## DIFF from uPP
         ExhaustiveAlgorithm.__init__(self)
-        self.alignment_threshold = self.options.alignment_threshold
-        self.placer = self.options.exhaustive.placer.lower()
-        self.push_down = True if self.options.push_down is True else False
-        _LOG.info("Will push fragments %s from their placement edge." % (
+        self.alignment_threshold = self.options.alignment_threshold # new
+        self.placer = self.options.exhaustive.placer.lower() # new
+        self.push_down = True if self.options.push_down is True else False # new
+        _LOG.info("Will push fragments %s from their placement edge." % ( 
             "down" if self.push_down else "up"))
 
-    def merge_results(self):
+    ## mostly the same as exhaustive.py, quite different from UPP 
+    def merge_results(self): 
         assert isinstance(self.root_problem, RootProblem)
 
         '''Generate single extended alignment'''
@@ -320,9 +350,15 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
         for pp in self.root_problem.get_children():
             for i in range(0, self.root_problem.fragment_chunks):
                 align_input = open(
+                    # extended_alignment = pp.jobs[
+                    # get_placement_job_name(i)].get_attribute(
+                    #    "full_extended_alignment_object")
                     pp.jobs[get_placement_job_name(i)]
                     .full_extended_alignment_file, 'rb')
-                extended_alignment = pickle.load(align_input)
+                # results are too large i think see above 311
+                extended_alignment = pickle.load(align_input) 
+                # the syntax differs slightly
+                # from exhaustive.py
                 align_input.close()
                 fullExtendedAlignment.merge_in(
                     extended_alignment, convert_to_string=True)
@@ -346,7 +382,7 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
         mergeinput.append("")
         mergeinput.append("")
         meregeinputstring = "\n".join(mergeinput)
-        merge_json_job = self.get_merge_job(meregeinputstring)
+        merge_json_job = self.get_merge_job(meregeinputstring) # using our own merge job
         merge_json_job.run()
 
     def check_options(self, supply=[]):
@@ -363,8 +399,11 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
     def _get_new_Join_Align_Job(self):
         return TIPPJoinAlignJobs(self.placer)
 
-    def build_jobs(self):
-        assert isinstance(self.root_problem, RootProblem)
+    def build_jobs(self): ## DIFF from uPP, 
+    # actually I don't think this is particularly necessary
+    # seems to mostly be here for the check of placer strat,
+    # and epa-ng is not implemented
+        assert isinstance(self.root_problem, RootProblem) ## DIFF
         for placement_problem in self.root_problem.get_children():
             ''' Create placer jobs'''
             for i in range(0, self.root_problem.fragment_chunks):
@@ -401,7 +440,7 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
                     aj.partial_setup_for_subproblem(
                         fc_problem, molecule=self.molecule)
 
-    def connect_jobs(self):
+    def connect_jobs(self): ## Not in UPP
         """ a callback function called after hmmbuild jobs are finished"""
         def enq_job_searchfragment(result, search_job):
             search_job.hmmmodel = result
@@ -425,10 +464,14 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
             jaj = self._get_new_Join_Align_Job()
             jaj.setup_with_placement_problem(placement_problem)
         ''' Join all search jobs together (enqueues align jobs)'''
-        jsj = TIPPJoinSearchJobs(self.alignment_threshold)
+
+        ## This is different from exhaustive.py, probably precisely for this
+        # threshold check 
+
+        jsj = TIPPJoinSearchJobs(self.alignment_threshold) 
         jsj.setup_with_root_problem(self.root_problem)
 
-    def load_reference(self, reference_pkg):
+    def load_reference(self, reference_pkg): ## Not in uPP 
         file = open(reference_pkg + 'CONTENTS.json')
         result = json.load(file)
         file.close()
@@ -441,7 +484,7 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
         options().tree_file = open(reference_pkg + result['files']['tree'])
         options().info_file = reference_pkg + result['files']['tree_stats']
 
-    def read_alignment_and_tree(self):
+    def read_alignment_and_tree(self): ## Exactly the same as inherited method.
         (alignment, tree) = AbstractAlgorithm.read_alignment_and_tree(self)
         # TODO: Check for rooted input
         # if not tree.is_rooted:
@@ -449,7 +492,9 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
         # rooted according to the taxonomy.")
         return alignment, tree
 
-    def get_merge_job(self, meregeinputstring):
+    def get_merge_job(self, meregeinputstring): ## Not in UPP or Exhaustive
+    # this is a new helper method, probably because the setup_for_tipp() is 
+    # long. 
         merge_json_job = TIPPMergeJsonJob()
         merge_json_job.setup_for_tipp(
             meregeinputstring,
@@ -463,7 +508,7 @@ class TIPPExhaustiveAlgorithm(ExhaustiveAlgorithm):
             self.options.cutoff)
         return merge_json_job
 
-    def get_alignment_decomposition_tree(self, p_tree):
+    def get_alignment_decomposition_tree(self, p_tree): ## new in TIPP
         assert isinstance(p_tree, PhylogeneticTree)
         if self.options.alignment_decomposition_tree is None:
             return PhylogeneticTree(Tree(p_tree.den_tree))
